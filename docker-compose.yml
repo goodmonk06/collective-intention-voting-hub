@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: intention-hub-db
@@ -18,6 +19,52 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - intention-network
+
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: intention-hub-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - intention-network
+
+  # Next.js Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: intention-hub-app
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://intention_user:intention_pass@postgres:5432/intention_hub
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - intention-network
 
 volumes:
   postgres_data:
+  redis_data:
+
+networks:
+  intention-network:
+    driver: bridge

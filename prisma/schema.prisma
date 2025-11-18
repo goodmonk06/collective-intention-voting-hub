@@ -9,57 +9,177 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================================
+// COMMUNITY & MEMBERSHIP
+// ============================================================
+
+enum MemberRole {
+  GUEST
+  MEMBER
+  MODERATOR
+  ADMIN
+  OWNER
+}
+
+enum MemberStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+model Community {
+  id                   String             @id @default(cuid())
+  key                  String             @unique
+  name                 String
+  description          String?            @db.Text
+  settingsJson         String             @default("{}")
+  isPublic             Boolean            @default(true)
+  isArchived           Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  cycles               IntentionCycle[]
+  members              CommunityMember[]
+  proposalTemplates    ProposalTemplate[]
+  activityLogs         ActivityLog[]
+
+  @@index([key])
+  @@index([isArchived])
+}
+
+model Member {
+  id                   String             @id @default(cuid())
+  email                String?            @unique
+  displayName          String
+  avatarUrl            String?
+  bio                  String?            @db.Text
+  preferencesJson      String             @default("{}")
+  externalAuthId       String?            @unique
+  status               MemberStatus       @default(ACTIVE)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  lastActiveAt         DateTime?
+
+  communities          CommunityMember[]
+  proposals            IntentionProposal[]
+  votes                IntentionVote[]
+  comments             Comment[]
+  activityLogs         ActivityLog[]
+
+  @@index([email])
+  @@index([externalAuthId])
+  @@index([status])
+}
+
+model CommunityMember {
+  id          String       @id @default(cuid())
+  communityId String
+  memberId    String
+  role        MemberRole   @default(MEMBER)
+  joinedAt    DateTime     @default(now())
+  leftAt      DateTime?
+
+  community   Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  member      Member       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([communityId, memberId])
+  @@index([communityId])
+  @@index([memberId])
+  @@index([role])
+}
+
+// ============================================================
+// INTENTION CYCLES & VOTING
+// ============================================================
+
+enum CycleStatus {
+  DRAFT
+  OPEN_FOR_PROPOSALS
+  PROPOSALS_CLOSED
+  OPEN_FOR_VOTING
+  VOTING_CLOSED
+  COMPLETED
+  ARCHIVED
+}
+
 model IntentionCycle {
   id                   String              @id @default(cuid())
-  communityId          String?
+  communityId          String
   key                  String              @unique
   title                String
   descriptionMarkdown  String              @db.Text
   periodStart          DateTime
   periodEnd            DateTime
+  status               CycleStatus         @default(OPEN_FOR_PROPOSALS)
   proposalWindowOpen   Boolean             @default(true)
   votingWindowOpen     Boolean             @default(false)
+  metadataJson         String              @default("{}")
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
+  createdBy            String?
 
+  community            Community           @relation(fields: [communityId], references: [id], onDelete: Cascade)
   proposals            IntentionProposal[]
   outcomes             IntentionOutcome[]
+  activityLogs         ActivityLog[]
 
   @@index([communityId])
+  @@index([status])
   @@index([periodStart, periodEnd])
+}
+
+enum ProposalStatus {
+  DRAFT
+  PUBLISHED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  WITHDRAWN
 }
 
 model IntentionProposal {
   id                String              @id @default(cuid())
   cycleId           String
-  proposerMemberId  String?
+  proposerId        String?
+  templateId        String?
   title             String
   bodyMarkdown      String              @db.Text
   tagsJson          String              @default("[]")
+  status            ProposalStatus      @default(PUBLISHED)
+  metadataJson      String              @default("{}")
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
   cycle             IntentionCycle      @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  proposer          Member?             @relation(fields: [proposerId], references: [id], onDelete: SetNull)
+  template          ProposalTemplate?   @relation(fields: [templateId], references: [id], onDelete: SetNull)
   votes             IntentionVote[]
+  comments          Comment[]
   selectedOutcomes  IntentionOutcome[]
+  activityLogs      ActivityLog[]
 
   @@index([cycleId])
-  @@index([proposerMemberId])
+  @@index([proposerId])
+  @@index([templateId])
+  @@index([status])
 }
 
 model IntentionVote {
   id                 String             @id @default(cuid())
   proposalId         String
-  voterMemberId      String?
+  voterId            String?
   weightScore        Int                @default(1)  // 1-5 scale
   resonanceTagJson   String             @default("[]")
   createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   proposal           IntentionProposal  @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  voter              Member?            @relation(fields: [voterId], references: [id], onDelete: SetNull)
 
-  @@unique([proposalId, voterMemberId])
+  @@unique([proposalId, voterId])
   @@index([proposalId])
-  @@index([voterMemberId])
+  @@index([voterId])
 }
 
 model IntentionOutcome {
@@ -75,4 +195,100 @@ model IntentionOutcome {
 
   @@unique([cycleId])
   @@index([selectedProposalId])
+}
+
+// ============================================================
+// DISCUSSION & ENGAGEMENT
+// ============================================================
+
+model Comment {
+  id          String             @id @default(cuid())
+  proposalId  String
+  authorId    String?
+  parentId    String?            // For threaded replies
+  content     String             @db.Text
+  isDeleted   Boolean            @default(false)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  proposal    IntentionProposal  @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  author      Member?            @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent      Comment?           @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies     Comment[]          @relation("CommentReplies")
+
+  @@index([proposalId])
+  @@index([authorId])
+  @@index([parentId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// TEMPLATES & REUSABILITY
+// ============================================================
+
+model ProposalTemplate {
+  id              String             @id @default(cuid())
+  communityId     String?
+  key             String
+  name            String
+  descriptionMarkdown String?        @db.Text
+  templateMarkdown String            @db.Text
+  defaultTagsJson String             @default("[]")
+  isPublic        Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  community       Community?         @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  proposals       IntentionProposal[]
+
+  @@unique([communityId, key])
+  @@index([communityId])
+  @@index([isPublic])
+}
+
+// ============================================================
+// AUDIT & ACTIVITY
+// ============================================================
+
+enum ActivityType {
+  COMMUNITY_CREATED
+  COMMUNITY_UPDATED
+  MEMBER_JOINED
+  MEMBER_LEFT
+  MEMBER_ROLE_CHANGED
+  CYCLE_CREATED
+  CYCLE_UPDATED
+  CYCLE_STATUS_CHANGED
+  PROPOSAL_CREATED
+  PROPOSAL_UPDATED
+  PROPOSAL_STATUS_CHANGED
+  VOTE_CAST
+  VOTE_UPDATED
+  COMMENT_CREATED
+  COMMENT_UPDATED
+  COMMENT_DELETED
+  OUTCOME_SELECTED
+}
+
+model ActivityLog {
+  id          String         @id @default(cuid())
+  type        ActivityType
+  actorId     String?
+  communityId String?
+  cycleId     String?
+  proposalId  String?
+  metadataJson String        @default("{}")
+  createdAt   DateTime       @default(now())
+
+  actor       Member?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  community   Community?     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  cycle       IntentionCycle? @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  proposal    IntentionProposal? @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@index([type])
+  @@index([actorId])
+  @@index([communityId])
+  @@index([cycleId])
+  @@index([proposalId])
+  @@index([createdAt])
 }

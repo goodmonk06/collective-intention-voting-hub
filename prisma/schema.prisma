@@ -1,0 +1,78 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model IntentionCycle {
+  id                   String              @id @default(cuid())
+  communityId          String?
+  key                  String              @unique
+  title                String
+  descriptionMarkdown  String              @db.Text
+  periodStart          DateTime
+  periodEnd            DateTime
+  proposalWindowOpen   Boolean             @default(true)
+  votingWindowOpen     Boolean             @default(false)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  proposals            IntentionProposal[]
+  outcomes             IntentionOutcome[]
+
+  @@index([communityId])
+  @@index([periodStart, periodEnd])
+}
+
+model IntentionProposal {
+  id                String              @id @default(cuid())
+  cycleId           String
+  proposerMemberId  String?
+  title             String
+  bodyMarkdown      String              @db.Text
+  tagsJson          String              @default("[]")
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  cycle             IntentionCycle      @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  votes             IntentionVote[]
+  selectedOutcomes  IntentionOutcome[]
+
+  @@index([cycleId])
+  @@index([proposerMemberId])
+}
+
+model IntentionVote {
+  id                 String             @id @default(cuid())
+  proposalId         String
+  voterMemberId      String?
+  weightScore        Int                @default(1)  // 1-5 scale
+  resonanceTagJson   String             @default("[]")
+  createdAt          DateTime           @default(now())
+
+  proposal           IntentionProposal  @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, voterMemberId])
+  @@index([proposalId])
+  @@index([voterMemberId])
+}
+
+model IntentionOutcome {
+  id                  String             @id @default(cuid())
+  cycleId             String
+  selectedProposalId  String
+  summaryMarkdown     String             @db.Text
+  aiSummaryJson       String             @default("{}")
+  createdAt           DateTime           @default(now())
+
+  cycle               IntentionCycle     @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  selectedProposal    IntentionProposal  @relation(fields: [selectedProposalId], references: [id], onDelete: Cascade)
+
+  @@unique([cycleId])
+  @@index([selectedProposalId])
+}
